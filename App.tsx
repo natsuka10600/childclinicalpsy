@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Screen, GroupSessionData, AssessmentSessionData, Member, LogEntry, AssessmentLogEntry, BEHAVIOR_TAGS, ASSESSMENT_TAGS, DEFAULT_THEORIES } from './types';
 import { Button } from './components/Button';
 import { generateGroupReport, generateAssessmentReport } from './services/geminiService';
-import { ArrowLeft, Camera, Users, CheckCircle, Plus, Edit3, Settings, History, FileText, Download, Trash2, Baby, User, Stethoscope, ClipboardList, PenTool, Home, Save } from 'lucide-react';
+import { ArrowLeft, Camera, Users, CheckCircle, Plus, Edit3, Settings, History, FileText, Download, Trash2, Baby, User, Stethoscope, ClipboardList, PenTool, Home, Save, Tag } from 'lucide-react';
 
 // --- Shared Components ---
 
@@ -24,9 +24,12 @@ const Header: React.FC<{ title: string; onBack?: () => void; rightElement?: Reac
 const SettingsScreen: React.FC<{ 
   theories: string[]; 
   setTheories: (t: string[]) => void;
+  behaviors: string[];
+  setBehaviors: (b: string[]) => void;
   onBack: () => void 
-}> = ({ theories, setTheories, onBack }) => {
+}> = ({ theories, setTheories, behaviors, setBehaviors, onBack }) => {
   const [newTheory, setNewTheory] = useState("");
+  const [newBehavior, setNewBehavior] = useState("");
 
   const addTheory = () => {
     if (newTheory.trim()) {
@@ -39,12 +42,25 @@ const SettingsScreen: React.FC<{
     setTheories(theories.filter((_, i) => i !== index));
   };
 
+  const addBehavior = () => {
+    if (newBehavior.trim()) {
+      setBehaviors([...behaviors, newBehavior.trim()]);
+      setNewBehavior("");
+    }
+  };
+
+  const removeBehavior = (index: number) => {
+    setBehaviors(behaviors.filter((_, i) => i !== index));
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Header title="設定 (Settings)" onBack={onBack} />
-      <div className="p-6 max-w-lg mx-auto w-full space-y-6">
+      <div className="p-6 max-w-lg mx-auto w-full space-y-6 pb-20">
+        
+        {/* Theory Management */}
         <div className="bg-white p-4 rounded-xl shadow-sm space-y-4">
-          <h3 className="font-bold text-slate-700">理論流派管理</h3>
+          <h3 className="font-bold text-slate-700 flex items-center gap-2"><Settings size={18}/> 理論流派管理</h3>
           <div className="flex gap-2">
             <input 
               value={newTheory}
@@ -53,9 +69,9 @@ const SettingsScreen: React.FC<{
               className="flex-1 p-2 border rounded-lg"
               onKeyDown={(e) => e.key === 'Enter' && addTheory()}
             />
-            <button onClick={addTheory} className="p-2 bg-medical-600 text-white rounded-lg"><Plus/></button>
+            <button onClick={addTheory} className="p-2 bg-medical-600 text-white rounded-lg"><Plus size={20}/></button>
           </div>
-          <div className="space-y-2 mt-2">
+          <div className="space-y-2 mt-2 max-h-40 overflow-y-auto">
             {theories.map((theory, idx) => (
               <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border">
                 <span>{theory}</span>
@@ -64,6 +80,30 @@ const SettingsScreen: React.FC<{
             ))}
           </div>
         </div>
+
+        {/* Behavior Tag Management */}
+        <div className="bg-white p-4 rounded-xl shadow-sm space-y-4">
+          <h3 className="font-bold text-slate-700 flex items-center gap-2"><Tag size={18}/> 團體行為標籤管理</h3>
+          <div className="flex gap-2">
+            <input 
+              value={newBehavior}
+              onChange={(e) => setNewBehavior(e.target.value)}
+              placeholder="新增行為 (如: 舉手發言)..."
+              className="flex-1 p-2 border rounded-lg"
+              onKeyDown={(e) => e.key === 'Enter' && addBehavior()}
+            />
+            <button onClick={addBehavior} className="p-2 bg-emerald-600 text-white rounded-lg"><Plus size={20}/></button>
+          </div>
+          <div className="space-y-2 mt-2 max-h-60 overflow-y-auto">
+            {behaviors.map((behavior, idx) => (
+              <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border">
+                <span>{behavior}</span>
+                <button onClick={() => removeBehavior(idx)} className="text-slate-400 hover:text-red-500"><Trash2 size={16}/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+
       </div>
     </div>
   );
@@ -310,7 +350,8 @@ const GroupObservationScreen: React.FC<{
   updateSession: (u: Partial<GroupSessionData>) => void;
   onNext: () => void;
   onBack: () => void;
-}> = ({ sessionData, updateSession, onNext, onBack }) => {
+  behaviorTags: string[];
+}> = ({ sessionData, updateSession, onNext, onBack, behaviorTags }) => {
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [isParentMode, setIsParentMode] = useState(false);
   const [scratchpad, setScratchpad] = useState("");
@@ -382,7 +423,7 @@ const GroupObservationScreen: React.FC<{
                 </div>
             )}
             <div className="grid grid-cols-2 gap-3 max-h-[40vh] overflow-y-auto">
-              {BEHAVIOR_TAGS.map(tag => (
+              {behaviorTags.map(tag => (
                 <button key={tag} onClick={() => addLog('behavior', tag, '', selectedMember)} className="p-3 border rounded-xl hover:bg-slate-50 font-medium text-left">{tag}</button>
               ))}
             </div>
@@ -683,6 +724,7 @@ const AssessmentReviewScreen: React.FC<{
 const App: React.FC = () => {
   const [screen, setScreen] = useState<Screen>(Screen.HOME);
   const [customTheories, setCustomTheories] = useState<string[]>(DEFAULT_THEORIES);
+  const [customBehaviors, setCustomBehaviors] = useState<string[]>(BEHAVIOR_TAGS);
   const [groupHistory, setGroupHistory] = useState<GroupSessionData[]>([]);
   const [assessmentHistory, setAssessmentHistory] = useState<AssessmentSessionData[]>([]);
 
@@ -752,13 +794,21 @@ const App: React.FC = () => {
             else setScreen(s);
         }} />
       )}
-      {screen === Screen.SETTINGS && <SettingsScreen theories={customTheories} setTheories={setCustomTheories} onBack={handleBack} />}
+      {screen === Screen.SETTINGS && (
+        <SettingsScreen 
+          theories={customTheories} 
+          setTheories={setCustomTheories} 
+          behaviors={customBehaviors}
+          setBehaviors={setCustomBehaviors}
+          onBack={handleBack} 
+        />
+      )}
       {screen === Screen.HISTORY && <HistoryScreen groupHistory={groupHistory} assessmentHistory={assessmentHistory} onBack={handleBack} />}
       
       {/* Group */}
       {screen === Screen.GROUP_LESSON_PLAN && <GroupLessonPlanScreen sessionData={groupSessionData} updateSession={updateGroupSession} onNext={() => setScreen(Screen.GROUP_SETUP)} onBack={handleBack} />}
       {screen === Screen.GROUP_SETUP && <GroupSetupScreen sessionData={groupSessionData} updateSession={updateGroupSession} onNext={() => setScreen(Screen.GROUP_OBSERVATION)} onBack={handleBack} />}
-      {screen === Screen.GROUP_OBSERVATION && <GroupObservationScreen sessionData={groupSessionData} updateSession={updateGroupSession} onNext={() => setScreen(Screen.GROUP_REVIEW)} onBack={handleBack} />}
+      {screen === Screen.GROUP_OBSERVATION && <GroupObservationScreen sessionData={groupSessionData} updateSession={updateGroupSession} onNext={() => setScreen(Screen.GROUP_REVIEW)} onBack={handleBack} behaviorTags={customBehaviors} />}
       {screen === Screen.GROUP_REVIEW && <GroupReviewScreen sessionData={groupSessionData} updateSession={updateGroupSession} onBack={handleBack} onHome={() => setScreen(Screen.HOME)} onEditLessonPlan={() => setScreen(Screen.GROUP_LESSON_PLAN)} theories={customTheories} saveToHistory={saveGroupToHistory} />}
 
       {/* Assessment */}
