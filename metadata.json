@@ -1,0 +1,7 @@
+{
+  "name": "Clinical Supervisor AI",
+  "description": "A clinical observation tool for psychology interns to generate professional reports from raw notes and photos using Gemini AI.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
