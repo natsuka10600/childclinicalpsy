@@ -146,7 +146,7 @@ const HistoryScreen: React.FC<{
               <div className="flex justify-between items-start">
                 <div>
                   <h3 className="font-bold text-slate-800">{session.groupName || session.caseName}</h3>
-                  <p className="text-sm text-slate-500">{session.date}</p>
+                  <p className="text-sm text-slate-500">{session.date} {session.sessionNumber ? `(第${session.sessionNumber}次)` : ''}</p>
                 </div>
               </div>
               <Button 
@@ -308,6 +308,7 @@ const GroupSetupScreen: React.FC<{
         <div className="bg-white p-4 rounded-xl shadow-sm space-y-4">
           <div className="grid grid-cols-2 gap-4">
              <div><label className="text-xs text-slate-500">團體名稱</label><input type="text" className="w-full p-2 bg-slate-50 rounded border" value={sessionData.groupName} onChange={e => updateSession({ groupName: e.target.value })} /></div>
+             <div><label className="text-xs text-slate-500">第幾次團體</label><input type="text" className="w-full p-2 bg-slate-50 rounded border" value={sessionData.sessionNumber} onChange={e => updateSession({ sessionNumber: e.target.value })} placeholder="Ex: 3" /></div>
              <div><label className="text-xs text-slate-500">日期</label><input type="date" className="w-full p-2 bg-slate-50 rounded border" value={sessionData.date} onChange={e => updateSession({ date: e.target.value })} /></div>
              <div><label className="text-xs text-slate-500">治療師</label><input type="text" className="w-full p-2 bg-slate-50 rounded border" value={sessionData.therapist} onChange={e => updateSession({ therapist: e.target.value })} /></div>
           </div>
