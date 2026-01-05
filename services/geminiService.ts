@@ -3,7 +3,7 @@ import { SYSTEM_INSTRUCTION } from "../constants";
 import { GroupSessionData, AssessmentSessionData } from "../types";
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 export const generateGroupReport = async (data: GroupSessionData): Promise<string> => {
   const modelId = "gemini-3-flash-preview"; 
