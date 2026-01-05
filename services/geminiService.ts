@@ -1,9 +1,45 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
-import { GroupSessionData, AssessmentSessionData } from "../types";
+import { GroupSessionData, AssessmentSessionData, Member } from "../types";
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+// Helper to generate text-based seat map
+const getSeatMapText = (members: Member[], layoutType: string = 'MEETING'): string => {
+    // Simple grid representation for text file
+    let mapText = `[座位表配置: ${layoutType}]\n`;
+    
+    // Create a 4x4 grid max for representation
+    const grid: string[][] = Array(4).fill(null).map(() => Array(4).fill("   [ ]   "));
+    
+    members.forEach(m => {
+        let r = 0, c = 0;
+        const idx = m.seatIndex;
+        // Map seat index to grid based on layout logic roughly used in UI
+        if (layoutType === 'MEETING') {
+            if (idx < 3) { r = 0; c = idx; }
+            else if (idx === 3) { r = 1; c = 2; }
+            else if (idx === 4) { r = 2; c = 2; }
+            else if (idx < 8) { r = 3; c = idx - 5; }
+        } else if (layoutType === 'CIRCLE') {
+            if (idx === 0) { r=0; c=1; } else if(idx===1) { r=0; c=2; }
+            else if(idx===2) { r=1; c=0; } else if(idx===3) { r=1; c=3; }
+            else if(idx===4) { r=2; c=0; } else if(idx===5) { r=2; c=3; }
+            else if(idx===6) { r=3; c=1; } else if(idx===7) { r=3; c=2; }
+        } else {
+             r = Math.floor(idx / 4);
+             c = idx % 4;
+        }
+        
+        if (r < 4 && c < 4) {
+             grid[r][c] = `[${m.name.padEnd(5, ' ').substring(0,5)}]`;
+        }
+    });
+
+    mapText += grid.map(row => row.join(" ")).join("\n");
+    return mapText;
+};
 
 export const generateGroupReport = async (data: GroupSessionData): Promise<string> => {
   const modelId = "gemini-3-flash-preview"; 
@@ -26,11 +62,14 @@ export const generateGroupReport = async (data: GroupSessionData): Promise<strin
     `${m.name} ${m.parentName ? `(Parent: ${m.parentName})` : ''} [Feature: ${m.feature}]`
   ).join('; ');
 
+  const seatMap = getSeatMapText(data.members, data.layoutType);
+
   const promptText = `
     [模式: 團體觀察報告生成]
     
     1. 基本資料:
       團體名稱: ${data.groupName}
+      場次: 第 ${data.sessionNumber} 次
       日期: ${data.date}
       治療師: ${data.therapist}
       成員名單: ${memberContext}
@@ -44,7 +83,11 @@ export const generateGroupReport = async (data: GroupSessionData): Promise<strin
     4. 觀察筆記 (Logs):
     ${logsText}
 
-    5. 特別要求:
+    5. 座位表資訊 (僅供參考):
+    ${seatMap}
+
+    6. 特別要求:
+    - 請在報告最開頭，以純文字圖形 (ASCII Art) 畫出座位表，並標示成員名稱。
     - 撰寫「團體觀察」段落時，請將零散的觀察紀錄整合為通順的敘事文章。
     - **絕對不要**在報告內容中顯示具體時間點（如 10:05），請改用「活動初期」、「隨後」、「結束前」等連接詞。
     - 格式：純文字 (Plain Text)。
@@ -88,6 +131,10 @@ export const generateAssessmentReport = async (data: AssessmentSessionData): Pro
     `[Category: ${log.category}] ${log.note}`
   ).join('\n');
 
+  const toolsText = data.assessmentTools.length > 0 
+    ? data.assessmentTools.map(t => `- ${t.name}: ${t.result}`).join('\n')
+    : "本次無施測紀錄";
+
   const promptText = `
     [模式: 衡鑑觀察報告生成]
 
@@ -101,26 +148,32 @@ export const generateAssessmentReport = async (data: AssessmentSessionData): Pro
     2. 原始主述 (Chief Complaint Raw Input):
        "${data.chiefComplaint}"
 
-    3. 行為觀察筆記 (Behavior Logs):
+    3. 施測工具與結果 (Assessment Tools & Results):
+       ${toolsText}
+
+    4. 行為觀察筆記 (Behavior Logs):
        ${logsText}
 
-    4. 任務要求:
-       請生成一份完整的衡鑑觀察報告，包含以下三個明確欄位：
+    5. 任務要求:
+       請生成一份完整的衡鑑觀察報告，包含以下四個明確欄位：
 
        **一、主述 (Chief Complaint)**
-       請將上述「原始主述」轉化為專業病歷格式（例如：將「講不聽」轉化為「指令遵從性低」或「對立反抗特質」）。
+       請將上述「原始主述」轉化為專業病歷格式。
 
-       **二、行為觀察 (Behavioral Observation)**
+       **二、測驗結果 (Test Results)**
+       列出施測項目與結果，若有數值請條列呈現。
+
+       **三、行為觀察 (Behavioral Observation)**
        請將「行為觀察筆記」整合成一篇完整、通順、具現象學描述的文章。
        - 描述個案的外觀、態度、測驗中的具體反應。
-       - 嚴格遵守現象學：寫出動作、表情、語氣，而非冷冰冰的分數。
+       - 嚴格遵守現象學：寫出動作、表情、語氣。
        - **不要**顯示時間戳記。
 
-       **三、心得與綜合評估 (Conclusion & Impression)**
-       - 綜合上述觀察，驗證「初步診斷假設」是否成立。
+       **四、心得與綜合評估 (Conclusion & Impression)**
+       - 綜合測驗結果與觀察，驗證「初步診斷假設」是否成立。
        - 提供臨床觀察總結。
 
-    5. 格式: 純文字 (Plain Text)。
+    6. 格式: 純文字 (Plain Text)。
   `;
 
   try {
