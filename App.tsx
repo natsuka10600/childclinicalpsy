@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Screen, GroupSessionData, AssessmentSessionData, Member, LogEntry, AssessmentLogEntry, BEHAVIOR_TAGS, ASSESSMENT_TAGS, DEFAULT_THEORIES } from './types';
+import { Screen, GroupSessionData, AssessmentSessionData, Member, LogEntry, AssessmentLogEntry, AssessmentTool, BEHAVIOR_TAGS, ASSESSMENT_TAGS, DEFAULT_THEORIES } from './types';
 import { Button } from './components/Button';
 import { generateGroupReport, generateAssessmentReport } from './services/geminiService';
-import { ArrowLeft, Camera, Users, CheckCircle, Plus, Edit3, Settings, History, FileText, Download, Trash2, Baby, User, Stethoscope, ClipboardList, PenTool, Home, Save, Tag } from 'lucide-react';
+import { ArrowLeft, Camera, Users, CheckCircle, Plus, Edit3, Settings, History, FileText, Download, Trash2, Baby, User, Stethoscope, ClipboardList, PenTool, Home, Save, Tag, RefreshCw, LayoutTemplate, Activity, AlertCircle, FileEdit } from 'lucide-react';
 
 // --- Shared Components ---
 
@@ -114,7 +114,9 @@ const HistoryScreen: React.FC<{
   groupHistory: GroupSessionData[];
   assessmentHistory: AssessmentSessionData[];
   onBack: () => void;
-}> = ({ groupHistory, assessmentHistory, onBack }) => {
+  onDelete: (id: string, type: 'GROUP' | 'ASSESSMENT') => void;
+  onResume: (data: any, type: 'GROUP' | 'ASSESSMENT') => void;
+}> = ({ groupHistory, assessmentHistory, onBack, onDelete, onResume }) => {
   const [tab, setTab] = useState<'GROUP' | 'ASSESSMENT'>('GROUP');
 
   const downloadTxt = (content: string, filename: string) => {
@@ -136,29 +138,45 @@ const HistoryScreen: React.FC<{
           <button onClick={() => setTab('GROUP')} className={`px-4 py-2 rounded-lg text-sm font-bold ${tab === 'GROUP' ? 'bg-medical-100 text-medical-700' : 'text-slate-500'}`}>團體紀錄</button>
           <button onClick={() => setTab('ASSESSMENT')} className={`px-4 py-2 rounded-lg text-sm font-bold ${tab === 'ASSESSMENT' ? 'bg-purple-100 text-purple-700' : 'text-slate-500'}`}>衡鑑紀錄</button>
       </div>
-      <div className="p-6 max-w-lg mx-auto w-full space-y-4">
+      <div className="p-6 max-w-lg mx-auto w-full space-y-4 pb-20">
         {activeList.length === 0 ? (
           <p className="text-center text-slate-500 mt-10">尚無紀錄。</p>
         ) : (
-            // @ts-ignore - Unified rendering for simplicity
-          activeList.slice().reverse().map((session: any) => (
-            <div key={session.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="font-bold text-slate-800">{session.groupName || session.caseName}</h3>
-                  <p className="text-sm text-slate-500">{session.date} {session.sessionNumber ? `(第${session.sessionNumber}次)` : ''}</p>
+          // @ts-ignore - Unified rendering
+          activeList.slice().reverse().map((session: any) => {
+            const isDraft = !session.generatedContent;
+            return (
+              <div key={session.id} className={`bg-white p-4 rounded-xl shadow-sm border ${isDraft ? 'border-amber-200 bg-amber-50/30' : 'border-slate-200'} flex flex-col gap-3 relative`}>
+                <div className="flex justify-between items-start pr-8 cursor-pointer" onClick={() => onResume(session, tab)}>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-slate-800">{session.groupName || session.caseName || "未命名"}</h3>
+                      {isDraft && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">草稿</span>}
+                    </div>
+                    <p className="text-sm text-slate-500">{session.date} {session.sessionNumber ? `(第${session.sessionNumber}次)` : ''}</p>
+                    <p className="text-xs text-slate-400 mt-1">點擊以繼續編輯或查看</p>
+                  </div>
                 </div>
+                
+                <button 
+                  onClick={(e) => { e.stopPropagation(); if(confirm('確定要刪除此紀錄嗎？')) onDelete(session.id, tab); }}
+                  className="absolute top-4 right-4 text-slate-400 hover:text-red-500 p-1"
+                >
+                  <Trash2 size={18}/>
+                </button>
+
+                {!isDraft && (
+                  <Button 
+                    variant="secondary" 
+                    onClick={(e) => { e.stopPropagation(); downloadTxt(session.generatedContent || "", `${session.groupName || session.caseName}_${session.date}.txt`); }}
+                    className="flex items-center justify-center gap-2 text-sm py-2"
+                  >
+                    <Download size={16}/> 輸出文字檔
+                  </Button>
+                )}
               </div>
-              <Button 
-                variant="secondary" 
-                onClick={() => downloadTxt(session.generatedContent || "", `${session.groupName || session.caseName}_${session.date}.txt`)}
-                className="flex items-center justify-center gap-2 text-sm py-2"
-                disabled={!session.generatedContent}
-              >
-                <Download size={16}/> 輸出文字檔 (.txt)
-              </Button>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>
@@ -284,9 +302,37 @@ const GroupSetupScreen: React.FC<{
   const [tempName, setTempName] = useState("");
   const [tempParent, setTempParent] = useState(""); 
   const [tempFeat, setTempFeat] = useState("");
-  const [seatCount, setSeatCount] = useState(9); 
+  const [seatCount, setSeatCount] = useState(8); 
+  const [layoutType, setLayoutType] = useState<'MEETING' | 'CIRCLE' | 'ROWS'>('MEETING');
+  const STORAGE_KEY = 'psy_note_last_group_members';
 
-  const handleAddMember = () => {
+  // Restore layout from sessionData if available, otherwise default meeting
+  useEffect(() => {
+    if (sessionData.layoutType) setLayoutType(sessionData.layoutType);
+  }, []);
+
+  // Update session data when layout changes
+  useEffect(() => {
+    updateSession({ layoutType });
+  }, [layoutType]);
+
+  // Pre-fill modal data when seat is selected
+  useEffect(() => {
+    if (selectedSeat !== null) {
+      const existingMember = sessionData.members.find(m => m.seatIndex === selectedSeat);
+      if (existingMember) {
+        setTempName(existingMember.name);
+        setTempParent(existingMember.parentName || "");
+        setTempFeat(existingMember.feature || "");
+      } else {
+        setTempName("");
+        setTempParent("");
+        setTempFeat("");
+      }
+    }
+  }, [selectedSeat, sessionData.members]);
+
+  const handleUpdateMember = () => {
     if (selectedSeat === null || !tempName) return;
     const newMember: Member = {
       id: Date.now().toString(),
@@ -295,10 +341,91 @@ const GroupSetupScreen: React.FC<{
       feature: tempFeat,
       seatIndex: selectedSeat
     };
+    // Remove existing member at this seat (if any) and add the new one
     const filtered = sessionData.members.filter(m => m.seatIndex !== selectedSeat);
     updateSession({ members: [...filtered, newMember], memberCount: filtered.length + 1 });
     setSelectedSeat(null);
-    setTempName(""); setTempParent(""); setTempFeat("");
+  };
+
+  const handleRemoveMember = () => {
+    if (selectedSeat === null) return;
+    const filtered = sessionData.members.filter(m => m.seatIndex !== selectedSeat);
+    updateSession({ members: filtered, memberCount: filtered.length });
+    setSelectedSeat(null);
+  }
+
+  const handleNext = () => {
+    // Save current members to local storage as "Template"
+    if (sessionData.members.length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData.members));
+    }
+    onNext();
+  };
+
+  const handleImport = () => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const members = JSON.parse(saved);
+        if (Array.isArray(members)) {
+          // Adjust seat count if necessary to fit imported members
+          const maxSeat = Math.max(...members.map((m: any) => m.seatIndex || 0));
+          if (maxSeat >= seatCount) {
+             setSeatCount(maxSeat + 1);
+          }
+          updateSession({ members, memberCount: members.length });
+          alert(`已匯入 ${members.length} 位成員`);
+        }
+      } catch (e) {
+        console.error("Failed to load members", e);
+      }
+    } else {
+      alert("沒有找到上次的成員紀錄");
+    }
+  };
+
+  // Helper to get seat styling based on layout
+  const getSeatStyle = (index: number) => {
+    if (index >= 8) return {}; // Overflow seats just flow naturally
+
+    if (layoutType === 'MEETING') {
+       // OOO (0,1,2)
+       //   O (3)
+       //   O (4)
+       // OOO (5,6,7)
+       // 3 Columns
+       if (index === 0) return { gridColumn: '1', gridRow: '1' };
+       if (index === 1) return { gridColumn: '2', gridRow: '1' };
+       if (index === 2) return { gridColumn: '3', gridRow: '1' };
+       if (index === 3) return { gridColumn: '3', gridRow: '2' };
+       if (index === 4) return { gridColumn: '3', gridRow: '3' };
+       if (index === 5) return { gridColumn: '1', gridRow: '4' };
+       if (index === 6) return { gridColumn: '2', gridRow: '4' };
+       if (index === 7) return { gridColumn: '3', gridRow: '4' };
+    }
+    
+    if (layoutType === 'CIRCLE') {
+       //   OO    (0, 1) - Row 1, Col 2,3
+       // O    O  (2, 3) - Row 2, Col 1,4
+       // O    O  (4, 5) - Row 3, Col 1,4
+       //   OO    (6, 7) - Row 4, Col 2,3
+       if (index === 0) return { gridColumn: '2', gridRow: '1' };
+       if (index === 1) return { gridColumn: '3', gridRow: '1' };
+       if (index === 2) return { gridColumn: '1', gridRow: '2' };
+       if (index === 3) return { gridColumn: '4', gridRow: '2' };
+       if (index === 4) return { gridColumn: '1', gridRow: '3' };
+       if (index === 5) return { gridColumn: '4', gridRow: '3' };
+       if (index === 6) return { gridColumn: '2', gridRow: '4' };
+       if (index === 7) return { gridColumn: '3', gridRow: '4' };
+    }
+
+    return {}; // Rows/Default flows naturally
+  };
+
+  const getContainerClass = () => {
+    if (layoutType === 'MEETING') return "grid grid-cols-3 gap-3 w-full max-w-[280px] mx-auto";
+    if (layoutType === 'CIRCLE') return "grid grid-cols-4 gap-2 w-full max-w-[320px] mx-auto";
+    return "grid grid-cols-4 gap-3 w-full max-w-[320px] mx-auto"; // Rows
   };
 
   return (
@@ -314,16 +441,40 @@ const GroupSetupScreen: React.FC<{
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm">
-           <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-slate-700">座位表</h3>
-              <button onClick={() => setSeatCount(prev => prev + 3)} className="text-xs text-medical-600 font-bold bg-medical-50 px-2 py-1 rounded">+ 增加</button>
+           <div className="flex flex-col gap-4 mb-4">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-slate-700">座位配置</h3>
+                <div className="flex gap-2">
+                    <button onClick={handleImport} className="text-xs text-medical-700 bg-medical-50 px-2 py-1 rounded flex items-center gap-1"><RefreshCw size={12}/> 匯入上次成員</button>
+                    <button onClick={() => setSeatCount(prev => prev + 1)} className="text-xs text-slate-600 font-bold bg-slate-100 px-2 py-1 rounded">+ 增加座位</button>
+                </div>
+              </div>
+              
+              <div className="flex gap-2 bg-slate-100 p-1 rounded-lg">
+                <button onClick={() => setLayoutType('MEETING')} className={`flex-1 py-1.5 text-xs rounded-md font-bold transition-all ${layoutType === 'MEETING' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>會議室</button>
+                <button onClick={() => setLayoutType('CIRCLE')} className={`flex-1 py-1.5 text-xs rounded-md font-bold transition-all ${layoutType === 'CIRCLE' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>團體室</button>
+                <button onClick={() => setLayoutType('ROWS')} className={`flex-1 py-1.5 text-xs rounded-md font-bold transition-all ${layoutType === 'ROWS' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>矩陣/教室</button>
+              </div>
            </div>
-           <div className="grid grid-cols-3 gap-3 max-w-[300px] mx-auto">
+
+           <div className={getContainerClass()}>
               {Array.from({ length: seatCount }).map((_, idx) => {
                 const member = sessionData.members.find(m => m.seatIndex === idx);
                 return (
-                  <button key={idx} onClick={() => setSelectedSeat(idx)} className={`aspect-square rounded-xl border-2 flex flex-col items-center justify-center p-1 text-xs relative ${member ? 'bg-medical-50 border-medical-500 text-medical-900' : 'bg-slate-50 border-slate-200'}`}>
-                     {member ? <><span className="font-bold truncate w-full">{member.name}</span>{member.parentName && <span className="text-[9px] bg-amber-100 px-1 rounded-full truncate max-w-full">{member.parentName}</span>}</> : <Plus size={20} />}
+                  <button 
+                    key={idx} 
+                    onClick={() => setSelectedSeat(idx)} 
+                    style={getSeatStyle(idx)}
+                    className={`aspect-square rounded-xl border-2 flex flex-col items-center justify-center p-1 text-xs relative transition-all ${member ? 'bg-medical-50 border-medical-500 text-medical-900 shadow-sm' : 'bg-slate-50 border-slate-200 hover:border-slate-300'}`}
+                  >
+                     {member ? (
+                        <>
+                            <span className="font-bold truncate w-full text-center">{member.name}</span>
+                            {member.parentName && <span className="text-[9px] bg-amber-100 px-1 rounded-full truncate max-w-full">{member.parentName}</span>}
+                        </>
+                     ) : (
+                        <span className="text-slate-300 font-mono text-[10px]">{idx + 1}</span>
+                     )}
                   </button>
                 );
               })}
@@ -333,15 +484,20 @@ const GroupSetupScreen: React.FC<{
       {selectedSeat !== null && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm space-y-4">
-             <h3 className="font-bold">座位 {selectedSeat + 1}</h3>
+             <h3 className="font-bold flex justify-between items-center">
+                <span>編輯座位 {selectedSeat + 1}</span>
+                {sessionData.members.find(m => m.seatIndex === selectedSeat) && (
+                   <button onClick={handleRemoveMember} className="text-red-500 text-xs flex items-center gap-1 bg-red-50 px-2 py-1 rounded"><Trash2 size={12}/> 清空此位</button>
+                )}
+             </h3>
              <input autoFocus className="w-full p-3 border rounded-xl" placeholder="兒童代號 (如: 小明)" value={tempName} onChange={e => setTempName(e.target.value)} />
              <input className="w-full p-3 border rounded-xl" placeholder="家長代號 (選填)" value={tempParent} onChange={e => setTempParent(e.target.value)} />
              <input className="w-full p-3 border rounded-xl" placeholder="特徵 (如: 紅衣)" value={tempFeat} onChange={e => setTempFeat(e.target.value)} />
-             <div className="flex gap-2"><Button variant="secondary" fullWidth onClick={() => setSelectedSeat(null)}>取消</Button><Button fullWidth onClick={handleAddMember}>確定</Button></div>
+             <div className="flex gap-2"><Button variant="secondary" fullWidth onClick={() => setSelectedSeat(null)}>取消</Button><Button fullWidth onClick={handleUpdateMember}>確定</Button></div>
           </div>
         </div>
       )}
-      <div className="fixed bottom-0 left-0 w-full p-4 bg-white border-t"><Button fullWidth onClick={onNext}>開始觀察</Button></div>
+      <div className="fixed bottom-0 left-0 w-full p-4 bg-white border-t"><Button fullWidth onClick={handleNext}>開始觀察</Button></div>
     </div>
   );
 };
@@ -351,8 +507,9 @@ const GroupObservationScreen: React.FC<{
   updateSession: (u: Partial<GroupSessionData>) => void;
   onNext: () => void;
   onBack: () => void;
+  onSaveDraft: () => void;
   behaviorTags: string[];
-}> = ({ sessionData, updateSession, onNext, onBack, behaviorTags }) => {
+}> = ({ sessionData, updateSession, onNext, onBack, onSaveDraft, behaviorTags }) => {
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [isParentMode, setIsParentMode] = useState(false);
   const [scratchpad, setScratchpad] = useState("");
@@ -377,7 +534,15 @@ const GroupObservationScreen: React.FC<{
 
   return (
     <div className="h-screen bg-slate-100 flex flex-col overflow-hidden">
-      <Header title={`Observation (${sessionData.logs.length})`} onBack={onBack} />
+      <Header 
+        title={`Observation (${sessionData.logs.length})`} 
+        onBack={onBack} 
+        rightElement={
+            <button onClick={onSaveDraft} className="text-sm bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg flex items-center gap-1 font-bold">
+                <Save size={16}/> 暫存草稿
+            </button>
+        }
+      />
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         <div className="flex-1 overflow-y-auto p-4">
            <div className="grid grid-cols-3 gap-3 max-w-lg mx-auto">
@@ -445,15 +610,27 @@ const GroupReviewScreen: React.FC<{
   theories: string[];
   saveToHistory: (data: GroupSessionData) => void;
 }> = ({ sessionData, updateSession, onBack, onHome, onEditLessonPlan, theories, saveToHistory }) => {
-  const [generatedReport, setGeneratedReport] = useState<string>("");
+  const [generatedReport, setGeneratedReport] = useState<string>(sessionData.generatedContent || "");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+
+  // Helper to download text file
+  const downloadFile = (content: string, filename: string) => {
+    const element = document.createElement("a");
+    const file = new Blob([content], {type: 'text/plain'});
+    element.href = URL.createObjectURL(file);
+    element.download = filename;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
 
   const handleGenerate = async () => {
     setIsGenerating(true);
     const report = await generateGroupReport(sessionData);
     setGeneratedReport(report);
-    // Do NOT auto save
+    // Update session data immediately so draft has it
+    updateSession({ generatedContent: report });
     setIsGenerating(false);
   };
 
@@ -461,6 +638,20 @@ const GroupReviewScreen: React.FC<{
     updateSession({ generatedContent: generatedReport });
     saveToHistory({ ...sessionData, generatedContent: generatedReport });
     setIsSaved(true);
+  };
+
+  const handleSaveDraft = () => {
+      // Save current state as is (even without generated content)
+      saveToHistory({ ...sessionData, generatedContent: generatedReport });
+      alert("草稿已保存到歷史紀錄！");
+  };
+
+  const generateRawLog = () => {
+     let content = `原始紀錄 - ${sessionData.groupName} (${sessionData.date})\n\n`;
+     sessionData.logs.forEach(log => {
+        content += `[${new Date(log.timestamp).toLocaleTimeString()}] ${log.actorName || (log.type === 'phase' ? 'PHASE' : 'NOTE')} (${log.action}): ${log.note}\n`;
+     });
+     return content;
   };
 
   if (isSaved) {
@@ -495,15 +686,24 @@ const GroupReviewScreen: React.FC<{
           </select>
         </div>
         {!generatedReport ? (
-          <Button fullWidth onClick={handleGenerate} disabled={isGenerating}>{isGenerating ? "AI 正在撰寫..." : "✨ 生成純文字報告"}</Button>
+          <div className="space-y-4">
+             <Button fullWidth onClick={handleGenerate} disabled={isGenerating}>{isGenerating ? "AI 正在撰寫..." : "✨ 生成純文字報告"}</Button>
+             <Button fullWidth variant="secondary" onClick={handleSaveDraft} className="flex items-center justify-center gap-2"><Save size={18}/> 先存為草稿 (防當機)</Button>
+          </div>
         ) : (
           <div className="space-y-6 animate-fade-in">
              <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
                  <div className="flex justify-between items-center border-b pb-2">
                     <h3 className="font-bold text-medical-800">生成結果</h3>
-                    <button className="text-xs bg-slate-100 px-2 py-1 rounded" onClick={() => navigator.clipboard.writeText(generatedReport)}>複製</button>
+                    <div className="flex gap-2">
+                        <button className="text-xs bg-slate-100 px-2 py-1 rounded" onClick={() => navigator.clipboard.writeText(generatedReport)}>複製</button>
+                    </div>
                  </div>
-                 <div className="whitespace-pre-wrap text-sm leading-relaxed">{generatedReport}</div>
+                 <div className="whitespace-pre-wrap text-sm leading-relaxed max-h-96 overflow-y-auto">{generatedReport}</div>
+                 <div className="flex gap-2 border-t pt-4">
+                    <button onClick={() => downloadFile(generateRawLog(), `${sessionData.groupName}_raw_logs.txt`)} className="flex-1 py-2 text-sm border rounded hover:bg-slate-50 flex items-center justify-center gap-1"><FileText size={14}/> 下載原始紀錄</button>
+                    <button onClick={() => downloadFile(generatedReport, `${sessionData.groupName}_report.txt`)} className="flex-1 py-2 text-sm bg-medical-50 text-medical-700 rounded hover:bg-medical-100 flex items-center justify-center gap-1"><Download size={14}/> 下載報告</button>
+                 </div>
              </div>
              
              <div className="grid grid-cols-2 gap-3">
@@ -565,73 +765,151 @@ const AssessmentObservationScreen: React.FC<{
   updateSession: (u: Partial<AssessmentSessionData>) => void;
   onNext: () => void;
   onBack: () => void;
-}> = ({ sessionData, updateSession, onNext, onBack }) => {
+  onSaveDraft: () => void;
+}> = ({ sessionData, updateSession, onNext, onBack, onSaveDraft }) => {
+  const [activeTab, setActiveTab] = useState<'BEHAVIOR' | 'TOOLS'>('BEHAVIOR');
+  const [activeTag, setActiveTag] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const logContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Tool Inputs
+  const [toolName, setToolName] = useState("");
+  const [toolResult, setToolResult] = useState("");
 
-  const addLog = (category: string, text: string) => {
+  const addLog = () => {
+    if (!note.trim()) return;
     const newLog: AssessmentLogEntry = {
         id: Date.now().toString(),
         timestamp: new Date(),
-        category,
-        note: text
+        category: activeTag || "General",
+        note: note
     };
     updateSession({ logs: [...sessionData.logs, newLog] });
     setNote("");
+  };
+
+  const addTool = () => {
+    if (!toolName.trim() || !toolResult.trim()) return;
+    const newTool: AssessmentTool = {
+      id: Date.now().toString(),
+      name: toolName,
+      result: toolResult
+    };
+    updateSession({ assessmentTools: [...sessionData.assessmentTools, newTool] });
+    setToolName("");
+    setToolResult("");
+  };
+
+  const removeTool = (id: string) => {
+    updateSession({ assessmentTools: sessionData.assessmentTools.filter(t => t.id !== id) });
   };
 
   useEffect(() => { if (logContainerRef.current) logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight; }, [sessionData.logs]);
 
   return (
     <div className="h-screen bg-slate-100 flex flex-col overflow-hidden">
-      <Header title="行為觀察 (Behavior)" onBack={onBack} />
+      <Header 
+        title="行為觀察 & 測驗" 
+        onBack={onBack} 
+        rightElement={
+            <button onClick={onSaveDraft} className="text-sm bg-purple-100 text-purple-700 px-3 py-1.5 rounded-lg flex items-center gap-1 font-bold">
+                <Save size={16}/> 暫存草稿
+            </button>
+        }
+      />
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-         {/* Input Area */}
+         {/* Left Panel (Input) */}
          <div className="p-4 bg-white lg:w-96 border-r flex flex-col gap-4 overflow-y-auto">
             <div className="p-3 bg-purple-50 rounded-xl border border-purple-100">
                 <h3 className="font-bold text-purple-800">{sessionData.caseName} <span className="text-sm font-normal text-slate-600">({sessionData.age}/{sessionData.gender})</span></h3>
                 <p className="text-xs text-slate-500 mt-1 truncate">{sessionData.provisionalDiagnosis}</p>
             </div>
             
-            <div className="space-y-2">
-                <label className="text-sm font-bold text-slate-700">紀錄觀察 (選擇標籤以新增)</label>
-                <textarea 
-                    className="w-full p-3 border rounded-xl h-24 focus:ring-2 focus:ring-purple-500 outline-none text-sm"
-                    placeholder="輸入觀察細節..."
-                    value={note}
-                    onChange={e => setNote(e.target.value)}
-                />
+            {/* Tabs for switching input mode */}
+            <div className="flex bg-slate-100 p-1 rounded-lg">
+               <button onClick={() => setActiveTab('BEHAVIOR')} className={`flex-1 py-2 text-xs font-bold rounded transition-all ${activeTab === 'BEHAVIOR' ? 'bg-white shadow text-purple-700' : 'text-slate-500'}`}>行為觀察</button>
+               <button onClick={() => setActiveTab('TOOLS')} className={`flex-1 py-2 text-xs font-bold rounded transition-all ${activeTab === 'TOOLS' ? 'bg-white shadow text-purple-700' : 'text-slate-500'}`}>測驗結果</button>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-                {ASSESSMENT_TAGS.map(tag => (
-                    <button 
-                        key={tag}
-                        onClick={() => {
-                            if(!note) return alert("請先輸入觀察內容再選擇標籤分類");
-                            addLog(tag, note);
-                        }}
-                        className="p-3 bg-white border hover:bg-purple-50 hover:border-purple-300 rounded-lg text-xs font-bold text-left transition-colors"
-                    >
-                        {tag}
-                    </button>
-                ))}
-            </div>
+            {activeTab === 'BEHAVIOR' ? (
+                <>
+                  <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500">1. 選擇分類</label>
+                      <div className="grid grid-cols-2 gap-2">
+                          {ASSESSMENT_TAGS.map(tag => (
+                              <button 
+                                  key={tag}
+                                  onClick={() => setActiveTag(tag)}
+                                  className={`p-2 border rounded-lg text-xs font-bold text-left transition-colors ${activeTag === tag ? 'bg-purple-600 text-white border-purple-600' : 'bg-white hover:bg-slate-50'}`}
+                              >
+                                  {tag}
+                              </button>
+                          ))}
+                      </div>
+                  </div>
+                  
+                  <div className="space-y-1 flex-1 flex flex-col">
+                      <label className="text-xs font-bold text-slate-500">2. 輸入觀察 (Enter新增)</label>
+                      <textarea 
+                          className="w-full p-3 border rounded-xl flex-1 min-h-[100px] focus:ring-2 focus:ring-purple-500 outline-none text-sm"
+                          placeholder={activeTag ? `關於 ${activeTag} 的觀察...` : "請先選擇上方分類..."}
+                          value={note}
+                          onChange={e => setNote(e.target.value)}
+                          onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addLog(); }}}
+                      />
+                  </div>
+                  <Button onClick={addLog} disabled={!note.trim()}>新增紀錄</Button>
+                </>
+            ) : (
+                <>
+                  <div className="space-y-3">
+                      <div>
+                        <label className="text-xs font-bold text-slate-500">測驗名稱</label>
+                        <input className="w-full p-3 border rounded-xl text-sm" placeholder="Ex: WISC-V" value={toolName} onChange={e => setToolName(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-500">測驗結果/數值</label>
+                        <textarea className="w-full p-3 border rounded-xl text-sm h-32" placeholder="Ex: FSIQ=100, VCI=110..." value={toolResult} onChange={e => setToolResult(e.target.value)} />
+                      </div>
+                      <Button onClick={addTool} disabled={!toolName.trim()}>新增測驗</Button>
+                  </div>
+                </>
+            )}
          </div>
 
-         {/* Log Feed */}
+         {/* Right Panel (Output Feed) */}
          <div className="flex-1 bg-slate-50 flex flex-col">
+            <div className="p-4 border-b bg-white flex justify-between items-center">
+               <h3 className="font-bold text-slate-700">{activeTab === 'BEHAVIOR' ? '觀察紀錄總覽' : '已施測項目'}</h3>
+               <span className="text-xs text-slate-400">{activeTab === 'BEHAVIOR' ? `${sessionData.logs.length} 筆` : `${sessionData.assessmentTools.length} 項`}</span>
+            </div>
+
             <div className="flex-1 overflow-y-auto p-4 space-y-3" ref={logContainerRef}>
-                {sessionData.logs.length === 0 && <div className="text-center text-slate-400 mt-10">尚無觀察紀錄</div>}
-                {sessionData.logs.map(log => (
-                    <div key={log.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                        <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded">{log.category}</span>
-                            <span className="text-[10px] text-slate-400">{log.timestamp.toLocaleTimeString()}</span>
-                        </div>
-                        <p className="text-slate-800 text-sm">{log.note}</p>
-                    </div>
-                ))}
+                {activeTab === 'BEHAVIOR' ? (
+                    <>
+                        {sessionData.logs.length === 0 && <div className="text-center text-slate-400 mt-10">尚無觀察紀錄</div>}
+                        {sessionData.logs.map(log => (
+                            <div key={log.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded">{log.category}</span>
+                                    <span className="text-[10px] text-slate-400">{log.timestamp.toLocaleTimeString()}</span>
+                                </div>
+                                <p className="text-slate-800 text-sm whitespace-pre-wrap">{log.note}</p>
+                            </div>
+                        ))}
+                    </>
+                ) : (
+                    <>
+                        {sessionData.assessmentTools.length === 0 && <div className="text-center text-slate-400 mt-10">尚未新增測驗</div>}
+                        {sessionData.assessmentTools.map(tool => (
+                            <div key={tool.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm relative group">
+                                <h4 className="font-bold text-slate-800 mb-1">{tool.name}</h4>
+                                <p className="text-sm text-slate-600 whitespace-pre-wrap">{tool.result}</p>
+                                <button onClick={() => removeTool(tool.id)} className="absolute top-2 right-2 text-slate-400 hover:text-red-500 p-2"><Trash2 size={16}/></button>
+                            </div>
+                        ))}
+                    </>
+                )}
             </div>
             <div className="p-4 bg-white border-t">
                 <Button fullWidth variant="danger" onClick={onNext}>結束並生成報告</Button>
@@ -649,7 +927,7 @@ const AssessmentReviewScreen: React.FC<{
   onHome: () => void;
   saveToHistory: (data: AssessmentSessionData) => void;
 }> = ({ sessionData, updateSession, onBack, onHome, saveToHistory }) => {
-  const [generatedReport, setGeneratedReport] = useState<string>("");
+  const [generatedReport, setGeneratedReport] = useState<string>(sessionData.generatedContent || "");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
 
@@ -657,7 +935,7 @@ const AssessmentReviewScreen: React.FC<{
     setIsGenerating(true);
     const report = await generateAssessmentReport(sessionData);
     setGeneratedReport(report);
-    // Do NOT auto save
+    updateSession({ generatedContent: report });
     setIsGenerating(false);
   };
 
@@ -665,6 +943,21 @@ const AssessmentReviewScreen: React.FC<{
     updateSession({ generatedContent: generatedReport });
     saveToHistory({ ...sessionData, generatedContent: generatedReport });
     setIsSaved(true);
+  };
+
+  const handleSaveDraft = () => {
+    saveToHistory({ ...sessionData, generatedContent: generatedReport });
+    alert("草稿已保存到歷史紀錄！");
+  };
+
+  const downloadFile = (content: string, filename: string) => {
+    const element = document.createElement("a");
+    const file = new Blob([content], {type: 'text/plain'});
+    element.href = URL.createObjectURL(file);
+    element.download = filename;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
   };
 
   if (isSaved) {
@@ -689,22 +982,31 @@ const AssessmentReviewScreen: React.FC<{
          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 space-y-2">
              <h3 className="font-bold text-slate-700">資料確認</h3>
              <p className="text-sm text-slate-600">主述: {sessionData.chiefComplaint ? "已輸入" : "未輸入"}</p>
+             <p className="text-sm text-slate-600">施測工具: {sessionData.assessmentTools.length} 項</p>
              <p className="text-sm text-slate-600">觀察紀錄: {sessionData.logs.length} 筆</p>
          </div>
 
          {!generatedReport ? (
-          <Button fullWidth onClick={handleGenerate} disabled={isGenerating}>
-            {isGenerating ? "AI 正在思考..." : "✨ 生成衡鑑報告"}
-          </Button>
+          <div className="space-y-4">
+             <Button fullWidth onClick={handleGenerate} disabled={isGenerating}>
+                {isGenerating ? "AI 正在思考..." : "✨ 生成衡鑑報告"}
+             </Button>
+             <Button fullWidth variant="secondary" onClick={handleSaveDraft} className="flex items-center justify-center gap-2"><Save size={18}/> 先存為草稿 (防當機)</Button>
+          </div>
         ) : (
           <div className="space-y-6 animate-fade-in">
              <div className="bg-white p-6 rounded-xl shadow-md border border-purple-100 space-y-4">
                  <div className="flex justify-between items-center border-b pb-2">
                     <h3 className="font-bold text-purple-800">生成結果</h3>
-                    <button className="text-xs bg-slate-100 px-3 py-2 rounded font-bold hover:bg-slate-200" onClick={() => navigator.clipboard.writeText(generatedReport)}>複製</button>
+                    <div className="flex gap-2">
+                        <button className="text-xs bg-slate-100 px-2 py-1 rounded" onClick={() => navigator.clipboard.writeText(generatedReport)}>複製</button>
+                    </div>
                  </div>
-                 <div className="whitespace-pre-wrap text-slate-800 font-mono text-sm leading-relaxed">
+                 <div className="whitespace-pre-wrap text-slate-800 font-mono text-sm leading-relaxed max-h-96 overflow-y-auto">
                     {generatedReport}
+                 </div>
+                 <div className="flex gap-2 border-t pt-4">
+                    <button onClick={() => downloadFile(generatedReport, `${sessionData.caseName}_assessment.txt`)} className="flex-1 py-2 text-sm bg-medical-50 text-medical-700 rounded hover:bg-medical-100 flex items-center justify-center gap-1"><Download size={14}/> 下載報告</button>
                  </div>
              </div>
              
@@ -736,9 +1038,40 @@ const App: React.FC = () => {
   const [groupSessionData, setGroupSessionData] = useState<GroupSessionData>(initialGroupSession);
 
   const initialAssessmentSession: AssessmentSessionData = {
-    id: '', date: new Date().toISOString().split('T')[0], caseName: '', age: '', gender: '男', chiefComplaint: '', provisionalDiagnosis: '', logs: [], generatedContent: ''
+    id: '', date: new Date().toISOString().split('T')[0], caseName: '', age: '', gender: '男', chiefComplaint: '', provisionalDiagnosis: '', logs: [], assessmentTools: [], generatedContent: ''
   };
   const [assessmentSessionData, setAssessmentSessionData] = useState<AssessmentSessionData>(initialAssessmentSession);
+
+  // Persistence Effects
+  const GROUP_HISTORY_KEY = 'psy_note_group_history';
+  const ASSESSMENT_HISTORY_KEY = 'psy_note_assessment_history';
+
+  // Load from local storage on mount
+  useEffect(() => {
+    const savedGroup = localStorage.getItem(GROUP_HISTORY_KEY);
+    const savedAssessment = localStorage.getItem(ASSESSMENT_HISTORY_KEY);
+    
+    if (savedGroup) {
+      try {
+        setGroupHistory(JSON.parse(savedGroup));
+      } catch(e) { console.error("Error loading group history", e); }
+    }
+    
+    if (savedAssessment) {
+      try {
+        setAssessmentHistory(JSON.parse(savedAssessment));
+      } catch(e) { console.error("Error loading assessment history", e); }
+    }
+  }, []);
+
+  // Save to local storage whenever history changes
+  useEffect(() => {
+    if (groupHistory.length > 0) localStorage.setItem(GROUP_HISTORY_KEY, JSON.stringify(groupHistory));
+  }, [groupHistory]);
+
+  useEffect(() => {
+    if (assessmentHistory.length > 0) localStorage.setItem(ASSESSMENT_HISTORY_KEY, JSON.stringify(assessmentHistory));
+  }, [assessmentHistory]);
 
 
   const updateGroupSession = (updates: Partial<GroupSessionData>) => setGroupSessionData(prev => ({ ...prev, ...updates }));
@@ -749,10 +1082,34 @@ const App: React.FC = () => {
     if (exists) setGroupHistory(prev => prev.map(h => h.id === data.id ? data : h));
     else setGroupHistory(prev => [...prev, data]);
   };
+  
   const saveAssessmentToHistory = (data: AssessmentSessionData) => {
     const exists = assessmentHistory.find(h => h.id === data.id);
     if (exists) setAssessmentHistory(prev => prev.map(h => h.id === data.id ? data : h));
     else setAssessmentHistory(prev => [...prev, data]);
+  };
+
+  const handleDeleteHistory = (id: string, type: 'GROUP' | 'ASSESSMENT') => {
+      if (type === 'GROUP') {
+        const newHistory = groupHistory.filter(h => h.id !== id);
+        setGroupHistory(newHistory);
+        localStorage.setItem(GROUP_HISTORY_KEY, JSON.stringify(newHistory)); // Force sync
+      } else {
+        const newHistory = assessmentHistory.filter(h => h.id !== id);
+        setAssessmentHistory(newHistory);
+        localStorage.setItem(ASSESSMENT_HISTORY_KEY, JSON.stringify(newHistory)); // Force sync
+      }
+  };
+
+  const handleResumeSession = (data: any, type: 'GROUP' | 'ASSESSMENT') => {
+      if (type === 'GROUP') {
+          setGroupSessionData(data);
+          // If generated content exists, go to review, else go to observation
+          setScreen(Screen.GROUP_REVIEW); 
+      } else {
+          setAssessmentSessionData(data);
+          setScreen(Screen.ASSESSMENT_REVIEW);
+      }
   };
 
   const handleStartGroup = () => {
@@ -804,18 +1161,61 @@ const App: React.FC = () => {
           onBack={handleBack} 
         />
       )}
-      {screen === Screen.HISTORY && <HistoryScreen groupHistory={groupHistory} assessmentHistory={assessmentHistory} onBack={handleBack} />}
+      {screen === Screen.HISTORY && (
+          <HistoryScreen 
+            groupHistory={groupHistory} 
+            assessmentHistory={assessmentHistory} 
+            onBack={handleBack} 
+            onDelete={handleDeleteHistory}
+            onResume={handleResumeSession}
+          />
+      )}
       
       {/* Group */}
       {screen === Screen.GROUP_LESSON_PLAN && <GroupLessonPlanScreen sessionData={groupSessionData} updateSession={updateGroupSession} onNext={() => setScreen(Screen.GROUP_SETUP)} onBack={handleBack} />}
       {screen === Screen.GROUP_SETUP && <GroupSetupScreen sessionData={groupSessionData} updateSession={updateGroupSession} onNext={() => setScreen(Screen.GROUP_OBSERVATION)} onBack={handleBack} />}
-      {screen === Screen.GROUP_OBSERVATION && <GroupObservationScreen sessionData={groupSessionData} updateSession={updateGroupSession} onNext={() => setScreen(Screen.GROUP_REVIEW)} onBack={handleBack} behaviorTags={customBehaviors} />}
-      {screen === Screen.GROUP_REVIEW && <GroupReviewScreen sessionData={groupSessionData} updateSession={updateGroupSession} onBack={handleBack} onHome={() => setScreen(Screen.HOME)} onEditLessonPlan={() => setScreen(Screen.GROUP_LESSON_PLAN)} theories={customTheories} saveToHistory={saveGroupToHistory} />}
+      {screen === Screen.GROUP_OBSERVATION && (
+          <GroupObservationScreen 
+            sessionData={groupSessionData} 
+            updateSession={updateGroupSession} 
+            onNext={() => setScreen(Screen.GROUP_REVIEW)} 
+            onBack={handleBack} 
+            onSaveDraft={() => saveGroupToHistory(groupSessionData)}
+            behaviorTags={customBehaviors} 
+          />
+      )}
+      {screen === Screen.GROUP_REVIEW && (
+          <GroupReviewScreen 
+            sessionData={groupSessionData} 
+            updateSession={updateGroupSession} 
+            onBack={handleBack} 
+            onHome={() => setScreen(Screen.HOME)} 
+            onEditLessonPlan={() => setScreen(Screen.GROUP_LESSON_PLAN)} 
+            theories={customTheories} 
+            saveToHistory={saveGroupToHistory} 
+          />
+      )}
 
       {/* Assessment */}
       {screen === Screen.ASSESSMENT_SETUP && <AssessmentSetupScreen sessionData={assessmentSessionData} updateSession={updateAssessmentSession} onNext={() => setScreen(Screen.ASSESSMENT_OBSERVATION)} onBack={handleBack} />}
-      {screen === Screen.ASSESSMENT_OBSERVATION && <AssessmentObservationScreen sessionData={assessmentSessionData} updateSession={updateAssessmentSession} onNext={() => setScreen(Screen.ASSESSMENT_REVIEW)} onBack={handleBack} />}
-      {screen === Screen.ASSESSMENT_REVIEW && <AssessmentReviewScreen sessionData={assessmentSessionData} updateSession={updateAssessmentSession} onBack={handleBack} onHome={() => setScreen(Screen.HOME)} saveToHistory={saveAssessmentToHistory} />}
+      {screen === Screen.ASSESSMENT_OBSERVATION && (
+          <AssessmentObservationScreen 
+             sessionData={assessmentSessionData} 
+             updateSession={updateAssessmentSession} 
+             onNext={() => setScreen(Screen.ASSESSMENT_REVIEW)} 
+             onBack={handleBack} 
+             onSaveDraft={() => saveAssessmentToHistory(assessmentSessionData)}
+          />
+      )}
+      {screen === Screen.ASSESSMENT_REVIEW && (
+          <AssessmentReviewScreen 
+            sessionData={assessmentSessionData} 
+            updateSession={updateAssessmentSession} 
+            onBack={handleBack} 
+            onHome={() => setScreen(Screen.HOME)} 
+            saveToHistory={saveAssessmentToHistory} 
+          />
+      )}
     </>
   );
 };
