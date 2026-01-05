@@ -3,7 +3,7 @@ import { SYSTEM_INSTRUCTION } from "../constants";
 import { GroupSessionData, AssessmentSessionData, Member } from "../types";
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 // Helper to generate text-based seat map
 const getSeatMapText = (members: Member[], layoutType: string = 'MEETING'): string => {
