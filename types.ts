@@ -1,3 +1,4 @@
+
 export enum Screen {
   HOME = 'HOME',
   SETTINGS = 'SETTINGS',
@@ -49,6 +50,7 @@ export interface GroupSessionData {
   members: Member[];
   logs: LogEntry[];
   theory: string;
+  layoutType?: 'MEETING' | 'CIRCLE' | 'ROWS';
   generatedContent?: string;
 }
 
@@ -60,6 +62,12 @@ export interface AssessmentLogEntry {
   note: string;
 }
 
+export interface AssessmentTool {
+  id: string;
+  name: string;
+  result: string;
+}
+
 export interface AssessmentSessionData {
   id: string;
   date: string;
@@ -69,6 +77,7 @@ export interface AssessmentSessionData {
   chiefComplaint: string; // Raw input
   provisionalDiagnosis: string;
   logs: AssessmentLogEntry[];
+  assessmentTools: AssessmentTool[];
   generatedContent?: string;
 }
 
